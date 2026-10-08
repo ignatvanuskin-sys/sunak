@@ -1,0 +1,7 @@
+User-agent: *
+Allow: /
+Disallow: /_data/
+Disallow: /api/
+
+# После публикации на реальном домене добавьте строку ниже с полным адресом карты сайта:
+# Sitemap: https://ваш-домен.kz/sitemap.xml
