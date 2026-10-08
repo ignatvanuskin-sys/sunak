@@ -14,10 +14,11 @@
   'use strict';
 
   var BOOKING_CONFIG = {
-    endpoint: '',                       // напр. '/api/booking' — включает backend-режим
+    endpoint: '',                    // напр. '/api/booking' — включает backend-режим
     whatsapp: '77753375793',
     phone: '+77753375793',
-    business: 'СТО «Сунақ»'
+    business: 'СТО «Сунақ»',
+    hours: { open: 9, close: 24 }    // график компании по данным 2ГИС
   };
 
   var $ = function (s, c) { return (c || document).querySelector(s); };
@@ -26,10 +27,22 @@
   /* ---------------- header ---------------- */
   var header = $('#header');
   function onScroll() {
-    if (header) header.classList.toggle('is-stuck', window.scrollY > 8);
+    if (header) header.classList.toggle('is-scrolled', window.scrollY > 12);
   }
   window.addEventListener('scroll', onScroll, { passive: true });
   onScroll();
+
+  /* ---------------- статус «открыто / закрыто» ---------------- */
+  (function workingStatus() {
+    var h = new Date().getHours();
+    var isOpen = h >= BOOKING_CONFIG.hours.open && h < BOOKING_CONFIG.hours.close;
+    var text = isOpen ? 'Сейчас открыто · до 24:00' : 'Закрыто · откроем в 09:00';
+    $$('[data-status-text]').forEach(function (el) { el.textContent = text; });
+    $$('[data-status-dot]').forEach(function (el) {
+      el.classList.toggle('is-closed', !isOpen);
+      el.setAttribute('title', text);
+    });
+  })();
 
   /* ---------------- mobile nav ---------------- */
   var burger = $('#burger');
@@ -51,16 +64,21 @@
     $$('a', nav).forEach(function (a) { a.addEventListener('click', closeNav); });
   }
 
-  /* ---------------- reveal on scroll ---------------- */
+  /* ---------------- reveal on scroll (с каскадом 70 мс) ---------------- */
   var revealItems = $$('[data-reveal]');
+  revealItems.forEach(function (el) {
+    var parent = el.parentElement;
+    if (!parent) return;
+    var siblings = $$('[data-reveal]', parent);
+    var idx = siblings.indexOf(el);
+    if (idx > 0) el.style.transitionDelay = (idx * 70) + 'ms';
+  });
   if ('IntersectionObserver' in window) {
     var io = new IntersectionObserver(function (entries) {
       entries.forEach(function (e) {
         if (!e.isIntersecting) return;
-        var el = e.target;
-        var delay = parseInt(el.getAttribute('data-reveal-delay') || '0', 10);
-        setTimeout(function () { el.classList.add('is-visible'); }, delay);
-        io.unobserve(el);
+        e.target.classList.add('is-visible');
+        io.unobserve(e.target);
       });
     }, { rootMargin: '0px 0px -8% 0px', threshold: 0.06 });
     revealItems.forEach(function (el) { io.observe(el); });
@@ -68,26 +86,38 @@
     revealItems.forEach(function (el) { el.classList.add('is-visible'); });
   }
 
-  /* ---------------- service filter ---------------- */
-  var chips = $$('.chip[data-filter]');
-  var serviceCards = $$('.service[data-cat]');
-  chips.forEach(function (chip) {
-    chip.addEventListener('click', function () {
-      var f = chip.getAttribute('data-filter');
-      chips.forEach(function (c) {
-        var on = c === chip;
-        c.classList.toggle('is-active', on);
-        c.setAttribute('aria-selected', on ? 'true' : 'false');
-      });
-      serviceCards.forEach(function (card) {
-        var show = f === 'all' || card.getAttribute('data-cat') === f;
-        card.classList.toggle('is-hidden', !show);
-      });
+  /* ---------------- копировать номер ---------------- */
+  var copyPhone = $('#copy-phone');
+  if (copyPhone) {
+    copyPhone.addEventListener('click', function () {
+      var value = copyPhone.getAttribute('data-phone') || BOOKING_CONFIG.phone;
+      var original = 'Копировать номер';
+      // Подтверждение показываем сразу и синхронно — не зависим от ответа Clipboard API
+      clearTimeout(copyPhone._t);
+      copyPhone.textContent = 'Номер скопирован';
+      copyPhone._t = setTimeout(function () { copyPhone.textContent = original; }, 2600);
+
+      if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(value).catch(function () { legacyCopy(value); });
+      } else {
+        legacyCopy(value);
+      }
     });
-  });
+    function legacyCopy(value) {
+      var ta = document.createElement('textarea');
+      ta.value = value;
+      ta.setAttribute('readonly', '');
+      ta.style.position = 'fixed';
+      ta.style.opacity = '0';
+      document.body.appendChild(ta);
+      ta.select();
+      try { document.execCommand('copy'); } catch (e) { /* ignore */ }
+      document.body.removeChild(ta);
+    }
+  }
 
   /* ---------------- lazy map ---------------- */
-  var mapFrame = $('.contacts__map iframe[data-src]');
+  var mapFrame = $('.map-card__frame iframe[data-src]');
   if (mapFrame) {
     var loadMap = function () {
       mapFrame.setAttribute('src', mapFrame.getAttribute('data-src'));
@@ -101,19 +131,34 @@
     } else { loadMap(); }
   }
 
-  /* ---------------- reviews slider ---------------- */
+  /* ---------------- слайдер отзывов ---------------- */
   var track = $('#reviews-track');
   var viewport = $('#reviews-viewport');
+  var indicator = $('#rev-indicator');
   if (track && viewport) {
-    var step = function () {
-      var first = track.querySelector('.review');
-      if (!first) return 320;
+    var cardStep = function () {
+      var first = track.querySelector('.review-card');
+      if (!first) return 360;
       var gap = parseFloat(getComputedStyle(track).columnGap || '14') || 14;
       return first.getBoundingClientRect().width + gap;
     };
+    var cards = $$('.review-card', track);
+    var updateIndicator = function () {
+      if (!indicator || !cards.length) return;
+      var idx = Math.round(viewport.scrollLeft / cardStep()) + 1;
+      idx = Math.max(1, Math.min(cards.length, idx));
+      indicator.textContent = 'Отзыв ' + idx + ' из ' + cards.length;
+    };
     var prev = $('#rev-prev'), next = $('#rev-next');
-    if (next) next.addEventListener('click', function () { viewport.scrollBy({ left: step(), behavior: 'smooth' }); });
-    if (prev) prev.addEventListener('click', function () { viewport.scrollBy({ left: -step(), behavior: 'smooth' }); });
+    if (next) next.addEventListener('click', function () { viewport.scrollBy({ left: cardStep(), behavior: 'smooth' }); });
+    if (prev) prev.addEventListener('click', function () { viewport.scrollBy({ left: -cardStep(), behavior: 'smooth' }); });
+    var t = null;
+    viewport.addEventListener('scroll', function () {
+      if (t) clearTimeout(t);
+      t = setTimeout(updateIndicator, 60);
+    }, { passive: true });
+    if ('onscrollend' in window) viewport.addEventListener('scrollend', updateIndicator);
+    updateIndicator();
   }
 
   /* ---------------- lightbox ---------------- */
@@ -151,9 +196,7 @@
     item.addEventListener('click', function () { openLightbox(i); });
   });
   if (lightbox) {
-    $$('[data-lightbox-close]', lightbox).forEach(function (b) {
-      b.addEventListener('click', closeLightbox);
-    });
+    $$('[data-lightbox-close]', lightbox).forEach(function (b) { b.addEventListener('click', closeLightbox); });
     lightbox.addEventListener('click', function (e) { if (e.target === lightbox) closeLightbox(); });
     var lbPrev = $('#lb-prev'), lbNext = $('#lb-next');
     if (lbPrev) lbPrev.addEventListener('click', function () { openLightbox(lbIndex - 1); });
@@ -271,11 +314,7 @@
 
   if (nextBtn) {
     nextBtn.addEventListener('click', function () {
-      if (!validateStep(wizard.step)) {
-        var bad = $('.wizard__step.is-current .field-error:not([hidden])');
-        if (bad) bad.focus && bad.focus();
-        return;
-      }
+      if (!validateStep(wizard.step)) return;
       if (wizard.step < wizard.total) showStep(wizard.step + 1);
     });
   }
@@ -294,7 +333,7 @@
     });
   });
 
-  /* ---------------- phone mask ---------------- */
+  /* ---------------- маска телефона ---------------- */
   function digits(v) { return (v || '').replace(/\D/g, ''); }
   function formatPhone(v) {
     var d = digits(v);
@@ -314,9 +353,7 @@
       if (!phoneInput.value) phoneInput.value = '+7 ';
     });
     phoneInput.addEventListener('input', function () {
-      var pos = phoneInput.value.length;
       phoneInput.value = formatPhone(phoneInput.value);
-      if (pos < 3) phoneInput.setSelectionRange(phoneInput.value.length, phoneInput.value.length);
       clearError('err-phone');
       saveDraft();
     });
@@ -334,8 +371,7 @@
     var e = $('#err-consent'); if (e) e.hidden = true;
   });
 
-  /* ---------------- calendar ---------------- */
-  var MONTHS = ['январь', 'февраль', 'март', 'апрель', 'май', 'июнь', 'июль', 'август', 'сентябрь', 'октябрь', 'ноябрь', 'декабрь'];
+  /* ---------------- календарь ---------------- */
   var calGrid = $('#cal-grid');
   var calLabel = $('#cal-label');
   var calPrev = $('#cal-prev');
@@ -349,13 +385,10 @@
   function startOfToday() {
     var t = new Date(); t.setHours(0, 0, 0, 0); return t;
   }
-  function monthLabelRu(d) {
-    return d.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' }).replace(' г.', '');
-  }
   function renderCalendar() {
     if (!calGrid) return;
     calGrid.innerHTML = '';
-    calLabel.textContent = monthLabelRu(view);
+    calLabel.textContent = view.toLocaleDateString('ru-RU', { month: 'long', year: 'numeric' }).replace(' г.', '');
 
     var firstDow = (new Date(view.getFullYear(), view.getMonth(), 1).getDay() + 6) % 7;
     var daysInMonth = new Date(view.getFullYear(), view.getMonth() + 1, 0).getDate();
@@ -364,6 +397,7 @@
     for (var i = 0; i < firstDow; i++) {
       var pad = document.createElement('span');
       pad.className = 'day day--empty';
+      pad.style.visibility = 'hidden';
       calGrid.appendChild(pad);
     }
     for (var d = 1; d <= daysInMonth; d++) {
@@ -393,8 +427,10 @@
 
     var canGoBack = view.getFullYear() > today.getFullYear() ||
       (view.getFullYear() === today.getFullYear() && view.getMonth() > today.getMonth());
-    calPrev.disabled = !canGoBack;
-    calPrev.style.opacity = canGoBack ? '' : '.4';
+    if (calPrev) {
+      calPrev.disabled = !canGoBack;
+      calPrev.style.opacity = canGoBack ? '' : '.4';
+    }
   }
   if (calPrev) calPrev.addEventListener('click', function () {
     view = new Date(view.getFullYear(), view.getMonth() - 1, 1); renderCalendar();
@@ -404,12 +440,12 @@
   });
   renderCalendar();
 
-  /* ---------------- time slots ---------------- */
+  /* ---------------- слоты времени ---------------- */
   var slotsWrap = $('#slots');
   (function buildSlots() {
     if (!slotsWrap) return;
     var frag = document.createDocumentFragment();
-    for (var h = 9; h < 24; h++) {
+    for (var h = BOOKING_CONFIG.hours.open; h < BOOKING_CONFIG.hours.close; h++) {
       for (var m = 0; m < 60; m += 30) {
         var label = (h < 10 ? '0' + h : h) + ':' + (m === 0 ? '00' : '30');
         var b = document.createElement('button');
@@ -440,7 +476,7 @@
     slotsWrap.appendChild(frag);
   })();
 
-  /* ---------------- summary + draft ---------------- */
+  /* ---------------- сводка и черновик ---------------- */
   function formatDateRu(d) {
     if (!d) return '—';
     return d.toLocaleDateString('ru-RU', { day: 'numeric', month: 'long', year: 'numeric' }).replace(' г.', '');
@@ -496,17 +532,17 @@
       renderSummary();
     } catch (e) { /* некорректный черновик игнорируем */ }
   }
-  function clearDraft() { try { sessionStorage.removeItem(DRAFT_KEY); } catch (e) {} }
+  function clearDraft() { try { sessionStorage.removeItem(DRAFT_KEY); } catch (e) { /* ignore */ } }
 
   /* ---------------- payload ---------------- */
   function buildPayload() {
     return {
-      name: ($('#f-name') || {}).value ? $('#f-name').value.trim() : '',
-      phone: formatPhone(($('#f-phone') || {}).value || ''),
+      name: $('#f-name') ? $('#f-name').value.trim() : '',
+      phone: formatPhone($('#f-phone') ? $('#f-phone').value : ''),
       service: selected.service,
       date: selected.date ? selected.date.toISOString().slice(0, 10) : '',
       time: selected.time,
-      comment: ($('#f-comment') || {}).value ? $('#f-comment').value.trim() : '',
+      comment: $('#f-comment') ? $('#f-comment').value.trim() : '',
       source: 'website',
       createdAt: new Date().toISOString()
     };
@@ -558,7 +594,7 @@
         } else {
           var ta = document.createElement('textarea');
           ta.value = txt; document.body.appendChild(ta); ta.select();
-          try { document.execCommand('copy'); } catch (e) {}
+          try { document.execCommand('copy'); } catch (e) { /* ignore */ }
           document.body.removeChild(ta); done();
         }
       };
@@ -570,7 +606,7 @@
     success.scrollIntoView({ block: 'nearest', behavior: 'smooth' });
   }
 
-  /* ---------------- submit ---------------- */
+  /* ---------------- отправка ---------------- */
   if (form) {
     form.addEventListener('submit', function (e) {
       e.preventDefault();
@@ -580,13 +616,11 @@
       var payload = buildPayload();
 
       if (!BOOKING_CONFIG.endpoint) {
-        // WhatsApp-режим: заявка не теряется, а передаётся компании готовым сообщением.
         clearDraft();
         renderSuccess(payload, 'whatsapp');
         return;
       }
 
-      // Backend-режим
       submitBtn.classList.add('is-loading');
       submitBtn.disabled = true;
       nextBtn.disabled = true;
@@ -621,7 +655,7 @@
     });
   }
 
-  /* ---------------- reset for a new booking ---------------- */
+  /* ---------------- сброс под новую запись ---------------- */
   function resetBooking() {
     if (form) form.hidden = false;
     var prog = $('#wizard-progress');
@@ -641,7 +675,7 @@
   var successClose = $('#success-close');
   if (successClose) successClose.addEventListener('click', function () { setTimeout(resetBooking, 320); });
 
-  /* ---------------- keyboard ---------------- */
+  /* ---------------- клавиатура ---------------- */
   document.addEventListener('keydown', function (e) {
     if (e.key === 'Escape') {
       if (lightbox && !lightbox.hidden) { closeLightbox(); return; }
@@ -662,7 +696,7 @@
     }
   });
 
-  /* ---------------- misc ---------------- */
+  /* ---------------- прочее ---------------- */
   var yearEl = $('#year');
   if (yearEl) yearEl.textContent = String(new Date().getFullYear());
 
